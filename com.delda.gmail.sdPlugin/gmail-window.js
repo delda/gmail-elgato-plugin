@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const childProcess = require('child_process');
 const openUrl = require('./open-url');
+const logger = require('./logger');
 
 var RECENT_LAUNCH_WINDOW_MS = 3000;
 var lastLaunchAt = 0;
@@ -19,10 +20,20 @@ function runCommand(command, args) {
             encoding: 'utf8',
         });
     } catch (err) {
+        logger.error('gmail-window', 'Errore eseguendo comando di sistema ' + command, {
+            args: args,
+            error: err,
+        });
         return null;
     }
 
     if (result.error || result.status !== 0) {
+        logger.error('gmail-window', 'Comando di sistema fallito: ' + command, {
+            args: args,
+            status: result.status,
+            stderr: result.stderr,
+            error: result.error,
+        });
         return null;
     }
 
@@ -33,7 +44,18 @@ function runCommand(command, args) {
 }
 
 function commandExists(command) {
-    return runCommand('which', [command]) !== null;
+    var result;
+
+    try {
+        result = childProcess.spawnSync('which', [command], {
+            encoding: 'utf8',
+        });
+    } catch (err) {
+        logger.error('gmail-window', 'Errore verificando la presenza del comando ' + command, err);
+        return false;
+    }
+
+    return !result.error && result.status === 0;
 }
 
 function isGnomeWaylandSession() {
@@ -58,6 +80,9 @@ function parseGdbusEvalOutput(stdout) {
     var payload;
 
     if (!match || match[1] !== 'true') {
+        logger.error('gmail-window', 'Output inatteso da gdbus eval', {
+            stdout: stdout,
+        });
         return null;
     }
 
@@ -220,6 +245,7 @@ function listWindowsViaGnomeShell() {
     try {
         parsed = JSON.parse(payload);
     } catch (err) {
+        logger.error('gmail-window', 'Impossibile fare il parse della lista finestre GNOME', err);
         return [];
     }
 
@@ -457,6 +483,11 @@ function spawnDetached(command, args) {
             stdio: 'ignore',
         });
     } catch (err) {
+        logger.error('gmail-window', 'Errore apertura browser in detached mode', {
+            command: command,
+            args: args,
+            error: err,
+        });
         return false;
     }
 
@@ -579,16 +610,21 @@ function openNewBrowserWindowLinux(urlString) {
     var previousWindows;
 
     if (!commandExists('xdg-settings')) {
+        logger.info('gmail-window', 'xdg-settings non disponibile, fallback a xdg-open');
         return openUrl(urlString);
     }
 
     defaultBrowser = runCommand('xdg-settings', ['get', 'default-web-browser']);
     if (!defaultBrowser) {
+        logger.error('gmail-window', 'Impossibile leggere il browser predefinito, fallback a xdg-open');
         return openUrl(urlString);
     }
 
     execTokens = getDesktopExecTokens(defaultBrowser.stdout.trim());
     if (!execTokens || !execTokens.length) {
+        logger.error('gmail-window', 'Exec del desktop file non valido, fallback a xdg-open', {
+            desktopEntry: defaultBrowser.stdout.trim(),
+        });
         return openUrl(urlString);
     }
 
@@ -606,11 +642,19 @@ function openNewBrowserWindowLinux(urlString) {
     args.push(urlString);
 
     if (!spawnDetached(execTokens[0], args)) {
+        logger.error('gmail-window', 'Apertura browser dedicata fallita, fallback a xdg-open', {
+            command: execTokens[0],
+            args: args,
+        });
         return openUrl(urlString);
     }
 
     lastLaunchAt = Date.now();
     trackLaunchedWindow(previousWindows, startupWmClass || trackedWindowClass, 0);
+    logger.info('gmail-window', 'Nuova finestra Gmail avviata', {
+        command: execTokens[0],
+        args: args,
+    });
     return Promise.resolve();
 }
 
@@ -624,15 +668,19 @@ function openOrFocusGmail(urlString) {
     }
 
     if (focusTrackedWindow()) {
+        logger.info('gmail-window', 'Riutilizzo finestra Gmail gia tracciata');
         return Promise.resolve();
     }
 
     windows = listWindows();
-	console.log(windows);
     for (i = 0; i < windows.length; i += 1) {
         if (isLikelyGmailWindow(windows[i]) && focusWindow(windows[i].id)) {
             trackedWindowId = windows[i].id;
             trackedWindowClass = windows[i].wmClass || trackedWindowClass;
+            logger.info('gmail-window', 'Finestra Gmail esistente portata in foreground', {
+                windowId: windows[i].id,
+                title: windows[i].title,
+            });
             return Promise.resolve();
         }
     }
@@ -641,14 +689,19 @@ function openOrFocusGmail(urlString) {
     for (i = windowIds.length - 1; i >= 0; i -= 1) {
         if (focusWindow(windowIds[i])) {
             trackedWindowId = windowIds[i];
+            logger.info('gmail-window', 'Finestra Gmail trovata tramite titolo e portata in foreground', {
+                windowId: windowIds[i],
+            });
             return Promise.resolve();
         }
     }
 
     if (Date.now() - lastLaunchAt < RECENT_LAUNCH_WINDOW_MS) {
+        logger.info('gmail-window', 'Nuovo launch evitato: finestra avviata di recente');
         return Promise.resolve();
     }
 
+    logger.info('gmail-window', 'Nessuna finestra Gmail attiva trovata, apro una nuova finestra');
     return openNewBrowserWindowLinux(urlString);
 }
 

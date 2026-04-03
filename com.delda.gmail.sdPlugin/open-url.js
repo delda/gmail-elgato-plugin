@@ -1,4 +1,5 @@
 const childProcess = require('child_process');
+const logger = require('./logger');
 
 function getOpenCommand(urlString) {
     if (process.platform === 'darwin') {
@@ -32,11 +33,25 @@ function openUrl(urlString) {
                 stdio: 'ignore',
             });
         } catch (err) {
+            logger.error('open-url', 'Errore apertura URL', {
+                url: urlString,
+                command: target.command,
+                args: target.args,
+                error: err,
+            });
             reject(err);
             return;
         }
 
-        child.on('error', reject);
+        child.on('error', function (err) {
+            logger.error('open-url', 'Errore asincrono apertura URL', {
+                url: urlString,
+                command: target.command,
+                args: target.args,
+                error: err,
+            });
+            reject(err);
+        });
         child.unref();
         resolve();
     });

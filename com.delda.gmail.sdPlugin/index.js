@@ -5,6 +5,7 @@ const Url = require('url');
 const querystring = require('querystring');
 const WebSocket = require('ws');
 const openOrFocusGmail = require('./gmail-window');
+const logger = require('./logger');
 
 const CREDENTIALS_PATH = path.join(__dirname, 'credentials.json');
 const TOKEN_PATH = path.join(__dirname, 'token.json');
@@ -16,11 +17,21 @@ const GMAIL_URL = 'https://mail.google.com/';
 var iconImageData = null;
 
 function readJson(filePath) {
-    return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+    try {
+        return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+    } catch (err) {
+        logger.error('io', 'Errore lettura JSON da ' + filePath, err);
+        throw err;
+    }
 }
 
 function writeJson(filePath, value) {
-    fs.writeFileSync(filePath, JSON.stringify(value, null, 2));
+    try {
+        fs.writeFileSync(filePath, JSON.stringify(value, null, 2));
+    } catch (err) {
+        logger.error('io', 'Errore scrittura JSON su ' + filePath, err);
+        throw err;
+    }
 }
 
 function getArgValue(name) {
@@ -41,6 +52,7 @@ function getIconImageData() {
         iconImageData = 'data:image/png;base64,' + imageBuffer.toString('base64');
     } catch (err) {
         iconImageData = null;
+        logger.error('icon', 'Errore caricamento icona del plugin', err);
     }
     return iconImageData;
 }
@@ -92,16 +104,24 @@ function postForm(urlString, formData) {
                         try {
                             resolve(JSON.parse(body));
                         } catch (err) {
+                            logger.error('oauth', 'JSON non valido dal token endpoint', err);
                             reject(new Error('JSON non valido dal token endpoint'));
                         }
                         return;
                     }
+                    logger.error('oauth', 'Token endpoint ha risposto con errore HTTP', {
+                        statusCode: res.statusCode,
+                        body: body,
+                    });
                     reject(new Error('Token endpoint HTTP ' + res.statusCode + ': ' + body));
                 });
             }
         );
 
-        req.on('error', reject);
+        req.on('error', function (err) {
+            logger.error('oauth', 'Errore HTTP verso token endpoint', err);
+            reject(err);
+        });
         req.write(payload);
         req.end();
     });
@@ -132,6 +152,7 @@ function getJson(urlString, accessToken) {
                     try {
                         parsed = body ? JSON.parse(body) : {};
                     } catch (err) {
+                        logger.error('gmail-api', 'JSON non valido dalla Gmail API', err);
                         reject(new Error('JSON non valido da Gmail API'));
                         return;
                     }
@@ -144,12 +165,16 @@ function getJson(urlString, accessToken) {
                     var error = new Error('Gmail API HTTP ' + res.statusCode);
                     error.statusCode = res.statusCode;
                     error.payload = parsed;
+                    logger.error('gmail-api', 'Gmail API ha risposto con errore HTTP', error);
                     reject(error);
                 });
             }
         );
 
-        req.on('error', reject);
+        req.on('error', function (err) {
+            logger.error('gmail-api', 'Errore HTTP verso Gmail API', err);
+            reject(err);
+        });
         req.end();
     });
 }
@@ -163,11 +188,14 @@ function isTokenExpired(tokens) {
 
 async function refreshAccessToken(credentials, tokens) {
     if (!tokens.refresh_token) {
-        throw new Error('refresh_token mancante. Esegui di nuovo node auth.js');
+        var missingRefreshTokenError = new Error('refresh_token mancante. Esegui di nuovo node auth.js');
+        logger.error('oauth', 'Impossibile aggiornare il token: refresh_token mancante', missingRefreshTokenError);
+        throw missingRefreshTokenError;
     }
 
     var installed = credentials.installed;
     var tokenUri = installed.token_uri || 'https://oauth2.googleapis.com/token';
+    logger.info('oauth', 'Avvio refresh access token');
     var response = await postForm(tokenUri, {
         client_id: installed.client_id,
         client_secret: installed.client_secret,
@@ -188,6 +216,7 @@ async function refreshAccessToken(credentials, tokens) {
     }
 
     writeJson(TOKEN_PATH, nextTokens);
+    logger.info('oauth', 'Refresh access token completato');
     return nextTokens;
 }
 
@@ -200,8 +229,11 @@ async function getValidAccessToken(credentials, tokenState) {
     return tokenState.current.access_token;
 }
 
-async function getUnreadCount(credentials, tokenState) {
+async function getUnreadCount(credentials, tokenState, trigger) {
     var accessToken = await getValidAccessToken(credentials, tokenState);
+    logger.info('refresh', 'Chiamata aggiornamento unread Gmail', {
+        trigger: trigger || 'unspecified',
+    });
 
     async function countUnreadMessages(token) {
         var total = 0;
@@ -232,6 +264,7 @@ async function getUnreadCount(credentials, tokenState) {
         return await countUnreadMessages(accessToken);
     } catch (err) {
         if (err.statusCode === 401) {
+            logger.error('refresh', 'Token scaduto durante aggiornamento unread, nuovo refresh necessario', err);
             tokenState.current = await refreshAccessToken(credentials, tokenState.current || {});
             return await countUnreadMessages(tokenState.current.access_token);
         }
@@ -261,8 +294,9 @@ function parseInitialContexts(infoJson) {
 }
 
 async function start() {
+    logger.info('startup', 'Avvio plugin Gmail Stream Deck');
     if (!fs.existsSync(CREDENTIALS_PATH) || !fs.existsSync(TOKEN_PATH)) {
-        console.error('Missing credentials.json o token.json. Esegui prima node auth.js');
+        logger.error('startup', 'Missing credentials.json o token.json. Esegui prima node auth.js');
         process.exit(1);
     }
 
@@ -272,7 +306,7 @@ async function start() {
     var infoRaw = getArgValue('-info');
 
     if (!port || !pluginUUID || !registerEvent) {
-        console.error('Argomenti Stream Deck mancanti (-port, -pluginUUID, -registerEvent).');
+        logger.error('startup', 'Argomenti Stream Deck mancanti (-port, -pluginUUID, -registerEvent).');
         process.exit(1);
     }
 
@@ -281,13 +315,13 @@ async function start() {
         try {
             infoJson = JSON.parse(infoRaw);
         } catch (err) {
-            console.error('Impossibile parse -info JSON:', err.message || err);
+            logger.error('startup', 'Impossibile fare il parse di -info JSON', err);
         }
     }
 
     var credentials = readJson(CREDENTIALS_PATH);
     if (!credentials.installed || !credentials.installed.client_id || !credentials.installed.client_secret) {
-        console.error('credentials.json non valido.');
+        logger.error('startup', 'credentials.json non valido.');
         process.exit(1);
     }
 
@@ -345,19 +379,29 @@ async function start() {
     }
 
     var polling = false;
-    async function refreshTitles() {
+    async function refreshTitles(trigger) {
         if (polling) {
+            logger.info('refresh', 'Aggiornamento saltato: refresh gia in corso', {
+                trigger: trigger || 'unspecified',
+            });
             return;
         }
         polling = true;
         try {
-            var unread = await getUnreadCount(credentials, tokenState);
+            var unread = await getUnreadCount(credentials, tokenState, trigger);
             var displayValue = unread > 99 ? '99+' : String(unread);
             var imageData = unread > 0 ? buildBadgeImageData(displayValue) : getIconImageData();
             setAllImages(imageData);
             setAllTitles('');
+            logger.info('refresh', 'Aggiornamento unread completato', {
+                trigger: trigger || 'unspecified',
+                unread: unread,
+            });
         } catch (err) {
-            console.error('Errore lettura unread count:', err.message || err);
+            logger.error('refresh', 'Errore lettura unread count', {
+                trigger: trigger || 'unspecified',
+                error: err,
+            });
             var errorImageData = buildBadgeImageData('!');
             setAllImages(errorImageData || getIconImageData());
             setAllTitles('');
@@ -367,6 +411,7 @@ async function start() {
     }
 
     ws.on('open', function () {
+        logger.info('websocket', 'Connessione WebSocket aperta, registrazione plugin in corso');
         ws.send(
             JSON.stringify({
                 event: registerEvent,
@@ -375,9 +420,9 @@ async function start() {
         );
 
         setAllImages(getIconImageData());
-        refreshTitles();
+        refreshTitles('startup');
         setInterval(function () {
-            refreshTitles();
+            refreshTitles('interval');
         }, POLL_INTERVAL_MS);
     });
 
@@ -386,35 +431,43 @@ async function start() {
         try {
             data = JSON.parse(String(rawMessage));
         } catch (err) {
+            logger.error('websocket', 'Messaggio WebSocket non valido', err);
             return;
         }
 
         if (data.event === 'willAppear' && data.action === ACTION_UUID && data.context) {
             contexts[data.context] = true;
             setAllImages(getIconImageData());
-            refreshTitles();
+            logger.info('action', 'Action Gmail apparsa', {
+                context: data.context,
+            });
+            refreshTitles('willAppear');
             return;
         }
 
         if (data.event === 'willDisappear' && data.action === ACTION_UUID && data.context) {
             delete contexts[data.context];
+            logger.info('action', 'Action Gmail rimossa', {
+                context: data.context,
+            });
             return;
         }
 
         if (data.event === 'keyUp' && data.action === ACTION_UUID) {
             openOrFocusGmail(GMAIL_URL).catch(function (err) {
-                console.error('Errore apertura Gmail nel browser:', err.message || err);
+                logger.error('action', 'Errore apertura Gmail nel browser', err);
             });
-            refreshTitles();
+            logger.info('action', 'KeyUp ricevuto, apertura o focus Gmail in corso');
+            refreshTitles('keyUp');
         }
     });
 
     ws.on('error', function (err) {
-        console.error('WebSocket error:', err.message || err);
+        logger.error('websocket', 'WebSocket error', err);
     });
 }
 
 start().catch(function (err) {
-    console.error(err);
+    logger.error('startup', 'Errore fatale durante l\'avvio del plugin', err);
     process.exit(1);
 });

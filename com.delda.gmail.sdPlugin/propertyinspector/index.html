@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Gmail Notification</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 12px;
+      font-family: sans-serif;
+      background: #1f1f1f;
+      color: #f2f2f2;
+      font-size: 13px;
+      line-height: 1.4;
+    }
+  </style>
+</head>
+<body>
+  <div>Questa azione non ha impostazioni configurabili.</div>
+
+  <script>
+    var websocket = null;
+
+    // Called by Stream Deck / OpenDeck host on property inspector init.
+    function connectElgatoStreamDeckSocket(inPort, inPropertyInspectorUUID, inRegisterEvent) {
+      websocket = new WebSocket("ws://127.0.0.1:" + inPort);
+
+      websocket.onopen = function () {
+        websocket.send(JSON.stringify({
+          event: inRegisterEvent,
+          uuid: inPropertyInspectorUUID
+        }));
+      };
+
+      websocket.onmessage = function () {};
+      websocket.onerror = function () {};
+      websocket.onclose = function () {};
+    }
+  </script>
+</body>
+</html>

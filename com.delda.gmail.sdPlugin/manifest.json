@@ -1,0 +1,43 @@
+{
+    "SDKVersion": 2,
+    "Author": "delda",
+    "Description": "Displays the number of unread emails in Gmail",
+    "Name": "Gmail Notification",
+    "Category": "Gmail",
+    "Icon": "assets/icon",
+    "URL": "https://github.com/delda/open-deck-gmail-notification",
+    "UUID": "com.delda.gmail",
+    "Version": "1.0.0",
+    "OS": [
+        {
+            "Platform": "mac",
+            "MinimumVersion": "10.15"
+        },
+        {
+            "Platform": "windows",
+            "MinimumVersion": "10"
+        }
+    ],
+    "Actions": [
+        {
+            "Icon": "assets/icon",
+            "Name": "Gmail Unread Count",
+            "PropertyInspectorPath": "propertyinspector/index.html",
+            "States": [
+                {
+                    "Image": "assets/icon",
+                    "TitleAlignment": "middle",
+                    "FontSize": 16
+                }
+            ],
+            "Tooltip": "Gmail Unread Count",
+            "UUID": "com.delda.gmail.unread"
+        }
+    ],
+    "CodePath": "index.js",
+    "CodePathMac": "index.js",
+    "CodePathWin": "index.js",
+    "Software": {
+        "MinimumVersion": "6.4"
+    }
+}

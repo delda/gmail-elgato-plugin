@@ -1,4 +1,5 @@
 {
+    "$schema": "https://schemas.elgato.com/streamdeck/plugins/manifest.json",
     "SDKVersion": 2,
     "Author": "delda",
     "Description": "Displays the number of unread emails in Gmail",
@@ -7,7 +8,7 @@
     "Icon": "assets/icon",
     "URL": "https://github.com/delda/open-deck-gmail-notification",
     "UUID": "com.delda.gmail",
-    "Version": "1.0.0",
+    "Version": "1.0.0.0",
     "OS": [
         {
             "Platform": "mac",
@@ -37,6 +38,9 @@
     "CodePath": "index.js",
     "CodePathMac": "index.js",
     "CodePathWin": "index.js",
+    "Nodejs": {
+        "Version": "20"
+    },
     "Software": {
         "MinimumVersion": "6.4"
     }
